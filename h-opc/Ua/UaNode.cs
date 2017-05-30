@@ -18,7 +18,7 @@ namespace Hylasoft.Opc.Ua
     /// <param name="name">the name of the node</param>
     /// <param name="nodeId">The UA Id of the node</param>
     /// <param name="parent">The parent node</param>
-    internal UaNode(string name, string nodeId, Node parent = null)
+    public UaNode(string name, string nodeId, Node parent = null)
       : base(name, parent)
     {
       NodeId = nodeId;

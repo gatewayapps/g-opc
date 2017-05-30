@@ -69,8 +69,10 @@
     <Compile Include="Common\ClientExtensions.cs" />
     <Compile Include="Common\Node.cs" />
     <Compile Include="Common\IClient.cs" />
+    <Compile Include="Common\NodeDataQuality.cs" />
     <Compile Include="Common\OpcException.cs" />
     <Compile Include="Common\OpcStatus.cs" />
+    <Compile Include="Common\NodeDataValue.cs" />
     <Compile Include="Da\DaClient_async.cs" />
     <Compile Include="Da\DaClient.cs" />
     <Compile Include="Da\DaNode.cs" />

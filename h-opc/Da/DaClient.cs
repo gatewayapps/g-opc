@@ -190,6 +190,43 @@ namespace Hylasoft.Opc.Da
       sub.SetEnabled(true);
     }
 
+    public void Monitor<T>(string tag, int updateRate, Action<NodeDataValue<T>, Action> callback)
+    {
+      var subItem = new OpcDa.SubscriptionState
+      {
+        Name = (++_sub).ToString(CultureInfo.InvariantCulture),
+        Active = true,
+        UpdateRate = updateRate
+      };
+      var sub = _server.CreateSubscription(subItem);
+
+      // I have to start a new thread here because unsubscribing
+      // the subscription during a datachanged event causes a deadlock
+      Action unsubscribe = () => new Thread(o =>
+        _server.CancelSubscription(sub)).Start();
+
+      sub.DataChanged += (handle, requestHandle, values) =>
+      {
+        var itemValue = values[0];
+
+        T casted;
+        TryCastResult(itemValue.Value, out casted);
+
+        var dataValue = new NodeDataValue<T>
+        {
+          Node = new DaNode(tag, tag, null),
+          SourceTimestamp = itemValue.Timestamp,
+          ServerTimestamp = itemValue.Timestamp,
+          Value = casted,
+          Quality = itemValue.Quality == OpcDa.Quality.Good ? NodeDataQuality.Good : NodeDataQuality.Bad
+        };
+
+        callback(dataValue, unsubscribe);
+      };
+      sub.AddItems(new[] { new OpcDa.Item { ItemName = tag } });
+      sub.SetEnabled(true);
+    }
+        
     /// <summary>
     /// Finds a node on the Opc Server
     /// </summary>

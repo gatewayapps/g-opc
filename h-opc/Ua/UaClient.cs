@@ -170,22 +170,9 @@ namespace Hylasoft.Opc.Ua
     public T Read<T>(string tag)
     {
       var nodesToRead = BuildReadValueIdCollection(tag, Attributes.Value);
-      DataValueCollection results;
-      DiagnosticInfoCollection diag;
-      _session.Read(
-          requestHeader: null,
-          maxAge: 0,
-          timestampsToReturn: TimestampsToReturn.Neither,
-          nodesToRead: nodesToRead,
-          results: out results,
-          diagnosticInfos: out diag);
-      var val = results[0];
-
-      CheckReturnValue(val.StatusCode);
-      return (T)val.Value;
+      return Read<T>(nodesToRead);
     }
-
-
+        
     /// <summary>
     /// Read a tag asynchronously
     /// </summary>
@@ -196,7 +183,63 @@ namespace Hylasoft.Opc.Ua
     public Task<T> ReadAsync<T>(string tag)
     {
       var nodesToRead = BuildReadValueIdCollection(tag, Attributes.Value);
+      return ReadAsync<T>(nodesToRead);
+    }
 
+    /// <summary>
+    /// Reads the value of a tag using the OPC UA NodeId
+    /// </summary>
+    /// <typeparam name="T">The type of tag to read</typeparam>
+    /// <param name="nodeId">The OPC UA NodeId of the tag.</param>
+    /// <returns>The value retreived from the OPC</returns>
+    public T ReadByNodeId<T>(string nodeId)
+    {
+      var readValue = new ReadValueId
+      {
+        NodeId = nodeId,
+        AttributeId = Attributes.Value
+      };
+      var nodesToRead = new ReadValueIdCollection { readValue };
+      return Read<T>(nodesToRead);
+    }
+
+    /// <summary>
+    /// Read a tag asynchronously using the OPC UA NodeId
+    /// </summary>
+    /// <typeparam name="T">The type of tag to read</typeparam>
+    /// <param name="nodeId">The OPC UA NodeId of the tag</param>
+    /// <returns>The value retreived from teh OPC</returns>
+    public Task<T> ReadByNodeIdAsync<T>(string nodeId)
+    {
+      var readValue = new ReadValueId
+      {
+        NodeId = nodeId,
+        AttributeId = Attributes.Value
+      };
+      var nodesToRead = new ReadValueIdCollection { readValue };
+      return ReadAsync<T>(nodesToRead);
+    }
+
+    private T Read<T>(ReadValueIdCollection nodesToRead)
+    {
+      DataValueCollection results;
+      DiagnosticInfoCollection diag;
+      _session.Read(
+          requestHeader: null,
+          maxAge: 0,
+          timestampsToReturn: TimestampsToReturn.Neither,
+          nodesToRead: nodesToRead,
+          results: out results,
+          diagnosticInfos: out diag);
+      var val = results[0];
+      
+
+      CheckReturnValue(val.StatusCode);
+      return (T)val.Value;
+    }
+
+    private Task<T> ReadAsync<T>(ReadValueIdCollection nodesToRead)
+    {
       // Wrap the ReadAsync logic in a TaskCompletionSource, so we can use C# async/await syntax to call it:
       var taskCompletionSource = new TaskCompletionSource<T>();
       _session.BeginRead(
@@ -206,30 +249,29 @@ namespace Hylasoft.Opc.Ua
           nodesToRead: nodesToRead,
           callback: ar =>
           {
-            DataValueCollection results;
-            DiagnosticInfoCollection diag;
-            var response = _session.EndRead(
-                result: ar,
-                results: out results,
-                diagnosticInfos: out diag);
+              DataValueCollection results;
+              DiagnosticInfoCollection diag;
+              var response = _session.EndRead(
+              result: ar,
+              results: out results,
+              diagnosticInfos: out diag);
 
-            try
-            {
-              CheckReturnValue(response.ServiceResult);
-              CheckReturnValue(results[0].StatusCode);
-              var val = results[0];
-              taskCompletionSource.TrySetResult((T)val.Value);
-            }
-            catch (Exception ex)
-            {
-              taskCompletionSource.TrySetException(ex);
-            }
+              try
+              {
+                  CheckReturnValue(response.ServiceResult);
+                  CheckReturnValue(results[0].StatusCode);
+                  var val = results[0];
+                  taskCompletionSource.TrySetResult((T)val.Value);
+              }
+              catch (Exception ex)
+              {
+                  taskCompletionSource.TrySetException(ex);
+              }
           },
           asyncState: null);
 
       return taskCompletionSource.Task;
     }
-
 
     private WriteValueCollection BuildWriteValueCollection(string tag, uint attributeId, object dataValue)
     {
@@ -323,15 +365,16 @@ namespace Hylasoft.Opc.Ua
         PublishingEnabled = true,
         LifetimeCount = _options.SubscriptionLifetimeCount,
         KeepAliveCount = _options.SubscriptionKeepAliveCount,
-        DisplayName = tag,
-        Priority = byte.MaxValue
+        DisplayName = node.Tag,
+        Priority = byte.MaxValue,
+        TimestampsToReturn = TimestampsToReturn.Both
       };
 
       var item = new MonitoredItem
       {
         StartNodeId = node.NodeId,
         AttributeId = Attributes.Value,
-        DisplayName = tag,
+        DisplayName = node.Tag,
         SamplingInterval = _options.DefaultMonitorInterval
       };
       sub.AddItem(item);
@@ -350,8 +393,88 @@ namespace Hylasoft.Opc.Ua
           _session.RemoveSubscription(sub);
           sub.Dispose();
         };
+
         callback((T)t, unsubscribe);
       };
+    }
+
+    public void Monitor<T>(UaNode node, Action<NodeDataValue<T>, Action> callback)
+    {
+      Monitor(node, _options.DefaultMonitorInterval, callback);
+    }
+
+    public void Monitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>, Action> callback)
+    {
+      StartMonitor(node, samplingInterval, callback);
+    }
+
+    private void StartMonitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>, Action> callback)
+    {
+      var sub = new Subscription
+      {
+        PublishingInterval = samplingInterval,
+        PublishingEnabled = true,
+        LifetimeCount = _options.SubscriptionLifetimeCount,
+        KeepAliveCount = _options.SubscriptionKeepAliveCount,
+        DisplayName = node.Tag,
+        Priority = byte.MaxValue,
+        TimestampsToReturn = TimestampsToReturn.Both
+      };
+
+      var item = new MonitoredItem
+      {
+        StartNodeId = node.NodeId,
+        AttributeId = Attributes.Value,
+        DisplayName = node.Tag,
+        SamplingInterval = samplingInterval
+      };
+      sub.AddItem(item);
+      _session.AddSubscription(sub);
+      sub.Create();
+      sub.ApplyChanges();
+
+      item.Notification += (monitoredItem, args) =>
+      {
+        var p = (MonitoredItemNotification)args.NotificationValue;
+        var t = p.Value.WrappedValue.Value;
+        Action unsubscribe = () =>
+        {
+          sub.RemoveItems(sub.MonitoredItems);
+          sub.Delete(true);
+          _session.RemoveSubscription(sub);
+          sub.Dispose();
+        };
+        var dataValue = new NodeDataValue<T>
+        {
+          Node = node,
+          SourceTimestamp = p.Value.SourceTimestamp,
+          ServerTimestamp = p.Value.ServerTimestamp,
+          Value = (T)t,
+          Quality = ParseStatusCode(p.Value.StatusCode)
+        };
+
+        callback(dataValue, unsubscribe);
+      };
+    }
+
+    private NodeDataQuality ParseStatusCode(StatusCode statusCode)
+    {
+      if (StatusCode.IsGood(statusCode))
+      {
+        return NodeDataQuality.Good;
+      }
+      else if (StatusCode.IsBad(statusCode))
+      {
+        return NodeDataQuality.Bad;
+      }
+      else if (StatusCode.IsUncertain(statusCode))
+      {
+        return NodeDataQuality.Uncertain;
+      }
+      else
+      {
+        return NodeDataQuality.NA;
+      }
     }
 
     /// <summary>
