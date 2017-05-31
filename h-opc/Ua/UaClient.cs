@@ -398,17 +398,17 @@ namespace Hylasoft.Opc.Ua
       };
     }
 
-    public void Monitor<T>(UaNode node, Action<NodeDataValue<T>, Action> callback)
+    public void Monitor<T>(UaNode node, Action<NodeDataValue<T>> callback)
     {
       Monitor(node, _options.DefaultMonitorInterval, callback);
     }
 
-    public void Monitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>, Action> callback)
+    public void Monitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>> callback)
     {
       StartMonitor(node, samplingInterval, callback);
     }
 
-    private void StartMonitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>, Action> callback)
+    private void StartMonitor<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>> callback)
     {
       var sub = new Subscription
       {
@@ -421,6 +421,37 @@ namespace Hylasoft.Opc.Ua
         TimestampsToReturn = TimestampsToReturn.Both
       };
 
+      var item = CreateMonitoredItem<T>(node, samplingInterval, callback);
+      sub.AddItem(item);
+      _session.AddSubscription(sub);
+      sub.Create();
+      sub.ApplyChanges();
+    
+    }
+
+    public Subscription MonitorItems(IEnumerable<MonitoredItem> items, string subscriptionName)
+    {
+      var sub = new Subscription
+      {
+          PublishingInterval = _options.DefaultMonitorInterval,
+          PublishingEnabled = true,
+          LifetimeCount = _options.SubscriptionLifetimeCount,
+          KeepAliveCount = _options.SubscriptionKeepAliveCount,
+          DisplayName = subscriptionName,
+          Priority = byte.MaxValue,
+          TimestampsToReturn = TimestampsToReturn.Both
+      };
+
+      sub.AddItems(items);
+      _session.AddSubscription(sub);
+      sub.Create();
+      sub.ApplyChanges();
+
+      return sub;
+    }
+
+    public MonitoredItem CreateMonitoredItem<T>(UaNode node, int samplingInterval, Action<NodeDataValue<T>> callback)
+    {
       var item = new MonitoredItem
       {
         StartNodeId = node.NodeId,
@@ -428,22 +459,12 @@ namespace Hylasoft.Opc.Ua
         DisplayName = node.Tag,
         SamplingInterval = samplingInterval
       };
-      sub.AddItem(item);
-      _session.AddSubscription(sub);
-      sub.Create();
-      sub.ApplyChanges();
 
       item.Notification += (monitoredItem, args) =>
       {
         var p = (MonitoredItemNotification)args.NotificationValue;
         var t = p.Value.WrappedValue.Value;
-        Action unsubscribe = () =>
-        {
-          sub.RemoveItems(sub.MonitoredItems);
-          sub.Delete(true);
-          _session.RemoveSubscription(sub);
-          sub.Dispose();
-        };
+
         var dataValue = new NodeDataValue<T>
         {
           Node = node,
@@ -453,8 +474,10 @@ namespace Hylasoft.Opc.Ua
           Quality = ParseStatusCode(p.Value.StatusCode)
         };
 
-        callback(dataValue, unsubscribe);
+        callback(dataValue);
       };
+
+      return item;
     }
 
     private NodeDataQuality ParseStatusCode(StatusCode statusCode)
